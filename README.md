@@ -24,6 +24,7 @@ Inspects a `.docx` template and returns every merge field it contains, categoris
 |---|---|---|
 | `count` | `integer` | Total number of unique fields found |
 | `tags` | `string` | Comma-separated list of all field names |
+| `tables` | `array` | One entry per `TABLE_ROWS:` table, with name, payload key, and column list |
 | `files_scanned` | `string` | Which XML parts of the docx were scanned |
 
 **Example output**
@@ -31,6 +32,13 @@ Inspects a `.docx` template and returns every merge field it contains, categoris
 {
   "count": 8,
   "tags": "#show_partner_section, AI:risk_profile_narrative, HTML:letter_body, IMG:adviser_signature, TABLE:portfolio_table, adviser_name, client_name, letter_date",
+  "tables": [
+    {
+      "name": "fee_table",
+      "payload_key": "TABLE_ROWS:fee_table",
+      "columns": "account_owner, fee_amount, frequency"
+    }
+  ],
   "files_scanned": "word/document.xml"
 }
 ```
@@ -66,7 +74,7 @@ Accepts a `.docx` template and a list of key-value fields, performs all substitu
 
 ## Field Types
 
-The engine supports seven field types, distinguished by prefix.
+The engine supports eight field types, distinguished by prefix.
 
 ### Plain text — no prefix
 
@@ -89,9 +97,10 @@ Your adviser is {{adviser_name}}.
 
 ### Conditional blocks — `#` prefix
 
-Show or hide entire sections based on a `true`/`false` value. Opening and closing markers must each sit **alone on their own line**.
+Show or hide sections based on a `true`/`false` value. Two usage patterns are supported:
 
-**Template**
+**Block mode** — opening and closing markers each on their own paragraph. The content between them (which can span many paragraphs) is shown or hidden as a unit.
+
 ```
 {{#show_partner_section}}
 Partner name:   {{partner_name}}
@@ -99,28 +108,52 @@ Date of birth:  {{partner_dob}}
 {{/show_partner_section}}
 ```
 
+**Inline mode** — opening and closing markers within the same paragraph, wrapping a fragment of text.
+
+```
+This arrangement will be between {{client1_name}}{{#show_entity_party}} and {{entity_name}}{{/show_entity_party}} and Intergen Advisory Partners.
+```
+
+In both modes, when `true` the markers are removed and the content is retained. When `false` the markers and everything between them are removed.
+
 **Payload**
 ```json
-{ "key": "show_partner_section", "value": "true" },
+{ "key": "#show_partner_section", "value": "true" },
 { "key": "partner_name", "value": "Jane Smith" },
 { "key": "partner_dob", "value": "15/06/1972" }
 ```
 
-When `false` or omitted, the entire block including all content between the markers is removed. When `true`, the markers are removed and the content is retained.
+> **Note:** Conditional block names can be long and descriptive — the name itself acts as an instruction to the agent:
+> ```
+> {{#client_has_existing_insurance_policies}}
+> ...
+> {{/client_has_existing_insurance_policies}}
+> ```
 
-Conditional block names can be long and descriptive — the name itself acts as an instruction to the agent:
+---
 
+### Row-repeating table — `TABLE_ROWS:` prefix
+
+Populates a Word table by repeating a template row once per record. The template author defines the table structure in Word, marks the boundaries with `{{TABLE_START:name}}` and `{{TABLE_END:name}}` paragraphs, and places `{{column_name}}` tags in the template row. The engine clones the template row for each record and removes the markers.
+
+**Template structure**
 ```
-{{#client_has_existing_insurance_policies}}
-...
-{{/client_has_existing_insurance_policies}}
-
-{{#partner_is_retired_or_approaching_retirement}}
-...
-{{/partner_is_retired_or_approaching_retirement}}
+{{TABLE_START:fee_table}}
+[Word table with header row and one template row containing {{account_owner}}, {{fee_amount}}, {{frequency}}]
+{{TABLE_END:fee_table}}
 ```
 
-> **Rule:** `{{#block_name}}` and `{{/block_name}}` must each be on their own paragraph. They cannot share a line with other text.
+**Payload**
+```json
+{
+  "key": "TABLE_ROWS:fee_table",
+  "value": "[{\"account_owner\": \"John Smith\", \"fee_amount\": \"$1,500\", \"frequency\": \"Annually\"}, {\"account_owner\": \"Jane Smith\", \"fee_amount\": \"$1,500\", \"frequency\": \"Annually\"}]"
+}
+```
+
+The value must be a JSON array of objects. Each object's keys must match the `{{column_name}}` tags in the template row. `extract_merge_fields` returns a `tables` array listing each row table's name, payload key, and column names — so an agent can construct the correct payload structure without inspecting the template.
+
+> **Rule:** `{{TABLE_START:name}}` and `{{TABLE_END:name}}` must each be on their own paragraph, directly above and below the Word table.
 
 ---
 
@@ -231,15 +264,16 @@ Inserts a Word page break at the placeholder location. No payload entry required
 
 ## Field Type Summary
 
-| Field | Payload value | Own line required |
-|---|---|---|
-| `{{field_name}}` | Any string | No |
-| `{{#block_name}}` / `{{/block_name}}` | `true` / `false` | Yes |
-| `{{IMG:field_name}}` | Image URL | Yes |
-| `{{TABLE:field_name}}` | HTML table string | Yes |
-| `{{HTML:field_name}}` | Rich HTML string | Yes |
-| `{{AI:field_name}}` | Any string (agent-authored) | No |
-| `{{PAGE_BREAK}}` | None required | Yes |
+| Field | Payload key | Payload value | Own line required |
+|---|---|---|---|
+| `{{field_name}}` | `field_name` | Any string | No |
+| `{{#block_name}}` / `{{/block_name}}` | `#block_name` | `true` / `false` | Block mode: yes. Inline mode: no |
+| `{{TABLE_START:name}}` / `{{TABLE_END:name}}` | `TABLE_ROWS:name` | JSON array of row objects | Yes |
+| `{{IMG:field_name}}` | `IMG:field_name` | Image URL | Yes |
+| `{{TABLE:field_name}}` | `TABLE:field_name` | HTML table string | Yes |
+| `{{HTML:field_name}}` | `HTML:field_name` | Rich HTML string | Yes |
+| `{{AI:field_name}}` | `AI:field_name` | Any string (agent-authored) | No |
+| `{{PAGE_BREAK}}` | None required | None required | Yes |
 
 ---
 
@@ -286,7 +320,7 @@ Yours sincerely,
 
 ### Example 2 — Statement of Advice (SOA)
 
-A multi-section advice document with conditional partner section, portfolio table, rich recommendations, and page breaks.
+A multi-section advice document with conditional partner section, row-repeating fee table, rich recommendations, and page breaks.
 
 **Template**
 ```
@@ -307,11 +341,11 @@ Risk profile:   {{partner_risk_profile}}
 
 {{PAGE_BREAK}}
 
-Recommended Portfolio
+Ongoing Service Fees
 
-{{#show_portfolio_table}}
-{{TABLE:portfolio_table}}
-{{/show_portfolio_table}}
+{{TABLE_START:fee_table}}
+[Word table — header row + template row with {{account_owner}}, {{fee_amount}}, {{frequency}}]
+{{TABLE_END:fee_table}}
 
 {{PAGE_BREAK}}
 
@@ -338,16 +372,15 @@ Authority to Proceed
 {
   "fields": [
     { "key": "client_name",                "value": "John Smith" },
-    { "key": "soa_date",                   "value": "30 April 2026" },
-    { "key": "AI:executive_summary",       "value": "This Statement of Advice has been prepared for John Smith following our review meeting on 28 April 2026. It sets out our recommendations across superannuation, insurance, and investment." },
-    { "key": "show_partner_section",       "value": "true" },
+    { "key": "soa_date",                   "value": "1 May 2026" },
+    { "key": "AI:executive_summary",       "value": "This Statement of Advice has been prepared for John Smith following our review meeting on 28 April 2026." },
+    { "key": "#show_partner_section",      "value": "true" },
     { "key": "partner_name",               "value": "Jane Smith" },
     { "key": "partner_dob",                "value": "15/06/1972" },
     { "key": "partner_risk_profile",       "value": "Balanced" },
-    { "key": "show_portfolio_table",       "value": "true" },
-    { "key": "TABLE:portfolio_table",      "value": "<table><tr><th>Asset Class</th><th>Current</th><th>Recommended</th></tr><tr><td>Australian Shares</td><td>20%</td><td>35%</td></tr><tr><td>International Shares</td><td>10%</td><td>25%</td></tr><tr><td>Fixed Income</td><td>50%</td><td>25%</td></tr><tr><td>Cash</td><td>20%</td><td>15%</td></tr></table>" },
-    { "key": "HTML:recommendations_body",  "value": "<h2>Superannuation</h2><p>We recommend consolidating your three existing accounts into a single low-cost fund to reduce fees and simplify management.</p><h2>Insurance</h2><p>Your current life cover of <strong>$500,000</strong> is insufficient. We recommend increasing this to <strong>$1,200,000</strong> given your current liabilities.</p><h2>Debt Management</h2><p>Redirecting surplus cashflow of <strong>$1,500 per month</strong> to your mortgage will reduce your loan term by an estimated <em>six years</em>.</p>" },
-    { "key": "show_smsf_section",          "value": "false" },
+    { "key": "TABLE_ROWS:fee_table",       "value": "[{\"account_owner\": \"John Smith\", \"fee_amount\": \"$1,500\", \"frequency\": \"Annually\"}, {\"account_owner\": \"Jane Smith\", \"fee_amount\": \"$1,500\", \"frequency\": \"Annually\"}]" },
+    { "key": "HTML:recommendations_body",  "value": "<h2>Superannuation</h2><p>We recommend consolidating your three existing accounts into a single low-cost fund.</p><h2>Insurance</h2><p>Your current life cover of <strong>$500,000</strong> is insufficient. We recommend increasing to <strong>$1,200,000</strong>.</p>" },
+    { "key": "#show_smsf_section",         "value": "false" },
     { "key": "IMG:client_signature",       "value": "https://yourbucket.s3.amazonaws.com/sigs/john-smith.png" }
   ]
 }
@@ -355,7 +388,33 @@ Authority to Proceed
 
 ---
 
-### Example 3 — Descriptive Conditional Names
+### Example 3 — Inline Conditionals
+
+Use inline mode when the conditional wraps only part of a sentence within a single paragraph. Both the opening and closing markers must be in the same paragraph.
+
+**Template**
+```
+This arrangement will be between {{client1_name}} & {{client2_name}}{{#show_entity_party}}, and {{entity_name}}{{/show_entity_party}}, and Intergen Advisory Partners Pty Ltd.
+
+Signed by {{client1_name}}{{#show_as_trustee_for_lines}} as Trustee for {{entity_name}}{{/show_as_trustee_for_lines}}.
+```
+
+**Payload**
+```json
+{ "key": "#show_entity_party",         "value": "false" },
+{ "key": "#show_as_trustee_for_lines", "value": "false" }
+```
+
+Output (both false):
+```
+This arrangement will be between John Smith & Jane Smith, and Intergen Advisory Partners Pty Ltd.
+
+Signed by John Smith.
+```
+
+---
+
+### Example 4 — Descriptive Conditional Names
 
 Block names can be long and descriptive — they act as instructions to the agent reading the tag list without requiring any additional documentation.
 
@@ -376,7 +435,7 @@ Transition to retirement strategies may be appropriate for {{partner_name}}.
 
 ---
 
-### Example 4 — HTML Field with Inline Table
+### Example 5 — HTML Field with Inline Table
 
 A single `HTML:` field containing paragraphs, a table, and formatted text — no separate `TABLE:` field needed.
 
@@ -409,9 +468,10 @@ The engine injects Word style names — font, colour, and spacing are always con
 ### Workflow
 
 1. Build the template in Word with all placeholders in place
-2. Call `extract_merge_fields` to get the full tag list
+2. Call `extract_merge_fields` to get the full tag list (including `tables` for any `TABLE_ROWS:` tables)
 3. Build the payload — use the prefix to determine what each field expects:
    - `#field` → `true` / `false`
+   - `TABLE_ROWS:name` → JSON array of row objects (columns listed in `tables` output)
    - `IMG:field` → image URL
    - `TABLE:field` → HTML table string
    - `HTML:field` → rich HTML string
@@ -424,9 +484,11 @@ The engine injects Word style names — font, colour, and spacing are always con
 ### Rules summary
 
 - Field names may only contain letters, numbers, and underscores
-- `{{#...}}`, `{{/...}}`, `{{IMG:...}}`, `{{TABLE:...}}`, `{{HTML:...}}`, and `{{PAGE_BREAK}}` must each be on their own line
+- `{{IMG:...}}`, `{{TABLE:...}}`, `{{HTML:...}}`, `{{TABLE_START:...}}`, `{{TABLE_END:...}}`, and `{{PAGE_BREAK}}` must each be on their own paragraph
 - Plain text and `{{AI:...}}` fields can appear inline anywhere
-- Conditional blocks can wrap any content including tables, images, and HTML fields
+- Conditional blocks have two modes:
+  - **Block mode**: `{{#name}}` and `{{/name}}` each on their own paragraph — can wrap multiple paragraphs of content
+  - **Inline mode**: `{{#name}}` and `{{/name}}` in the same paragraph — wraps a text fragment within a sentence
 - Nested conditional blocks are supported as long as names are unique
 - `{{PAGE_BREAK}}` requires no payload entry and will not appear in the retrieved tag list
 
@@ -449,7 +511,7 @@ All libraries are available natively in the Workato Python connector. No additio
 
 ## Notes
 
-- **Split run repair** — Word sometimes splits a placeholder across multiple XML runs when typed directly in the document. The `merge_split_tags` step detects and repairs these automatically before substitution.
+- **Split run repair** — Word sometimes splits a placeholder across multiple XML runs when typed directly in the document (due to spell-checking, grammar-checking, or autocorrect). The `merge_split_tags` step detects and repairs these automatically before substitution. This is invisible to template authors — all standard placeholder formats are handled.
 - **XML safety** — all plain text values are XML-escaped before injection. `&`, `<`, and `>` in values will not corrupt the document.
 - **Image fallback** — if an image URL is unreachable the field is replaced with `[Image unavailable: <reason>]` and the merge continues rather than failing.
 - **Table fallback** — if HTML table conversion fails the field is replaced with `[Table error: <reason>]` and the merge continues.
