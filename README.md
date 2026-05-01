@@ -491,6 +491,7 @@ The engine injects Word style names — font, colour, and spacing are always con
   - **Inline mode**: `{{#name}}` and `{{/name}}` in the same paragraph — wraps a text fragment within a sentence
 - Nested conditional blocks are supported as long as names are unique
 - `{{PAGE_BREAK}}` requires no payload entry and will not appear in the retrieved tag list
+- **Tables and page breaks** — to prevent a table from splitting awkwardly across a page, place `{{PAGE_BREAK}}` on its own line immediately before `{{TABLE_START:name}}` or `{{TABLE:name}}`
 
 ---
 
@@ -517,3 +518,4 @@ All libraries are available natively in the Workato Python connector. No additio
 - **Table fallback** — if HTML table conversion fails the field is replaced with `[Table error: <reason>]` and the merge continues.
 - **Column hiding** — conditional blocks operate at the paragraph level. Hiding an entire table column is not currently supported. Pass empty values or pre-render the table without the column as a `TABLE:` field.
 - **Unresolved tags** — fields present in the template but missing from the payload appear in `unresolved_tags` rather than being silently removed, so gaps are always visible in the response.
+- **Blank page removal** — when a `show=false` conditional block is removed, any page-break paragraph immediately before the block would otherwise create a blank page. The engine automatically detects and collapses consecutive page-break paragraphs so blank pages are never produced.
