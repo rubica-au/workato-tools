@@ -30,20 +30,30 @@ by type.
 |---|---|---|
 | `count` | integer | Total number of unique fields found |
 | `tags` | string | Comma-separated list of all field names |
-| `tables` | array | One entry per TABLE_ROWS: table, with name, payload key, and column list |
+| `tables` | array | One entry per TABLE_ROWS table, with name, payload key, and column list |
+| `col_tables` | array | One entry per TABLE_COLS table, with name, payload key, and row key list |
 | `files_scanned` | string | Which XML parts of the docx were scanned |
 
 **Example output**
 
 ```json
 {
-  "count": 8,
-  "tags": "#show_partner_section, AI:risk_profile_narrative, HTML:letter_body, IMG:adviser_signature, TABLE:portfolio_table, adviser_name, client_name, letter_date",
+  "count": 7,
+  "tags": "#show_partner_section, AI:risk_profile_narrative, HTML:letter_body, IMG:adviser_signature, adviser_name, client_name, letter_date",
   "tables": [
     {
       "name": "fee_table",
+      "type": "TABLE_ROWS",
       "payload_key": "TABLE_ROWS:fee_table",
       "columns": "account_owner, fee_amount, frequency"
+    }
+  ],
+  "col_tables": [
+    {
+      "name": "current_funds",
+      "type": "TABLE_COLS",
+      "payload_key": "TABLE_COLS:current_funds",
+      "row_keys": "balance, investment_fee, orr_levy, product, sliding_admin_fee, total_combined_costs, total_product_costs"
     }
   ],
   "files_scanned": "word/document.xml"
@@ -106,15 +116,19 @@ Show or hide sections based on a true/false value. Two usage patterns:
 
 **Block mode** — opening and closing markers each on their own paragraph. Content 
 between them is shown or hidden as a unit.
+```
 {{#show_partner_section}}
 Partner name:   {{partner_name}}
 Date of birth:  {{partner_dob}}
 {{/show_partner_section}}
+```
 
 **Inline mode** — opening and closing markers within the same paragraph, wrapping 
 a fragment of text.
+```
 This arrangement will be between {{client1_name}}{{#show_entity_party}} and
 {{entity_name}}{{/show_entity_party}} and Intergen Advisory Partners.
+```
 
 When `true` the markers are removed and the content is retained. When `false` the 
 markers and everything between them are removed.
@@ -136,9 +150,12 @@ markers and everything between them are removed.
 Populates a Word table by repeating a template row once per record. Mark the 
 boundaries with `{{TABLE_START:name}}` and `{{TABLE_END:name}}` paragraphs, and 
 place `{{column_name}}` tags in the template row.
+
+```
 {{TABLE_START:fee_table}}
 [Word table — header row + template row with {{account_owner}}, {{fee_amount}}, {{frequency}}]
 {{TABLE_END:fee_table}}
+```
 
 ```json
 {
@@ -159,11 +176,76 @@ inspecting the template manually.
 
 ---
 
+### Column-repeating table — `TABLE_COLS:` prefix
+
+Populates a Word table where the **rows are fixed** and the **columns are dynamic** 
+— one column per record. The classic use case is a product comparison table: 
+row labels are fixed in the template (Product, Balance, Investment fee, etc.) and 
+each fund or option becomes a new column at runtime.
+
+**How to author the template in Word:**
+
+Build the table exactly as it should look, with all row labels, subheaders, 
+indentation, bold rows, and shading defined in column 1. In column 2 — and only 
+column 2 — place `{{TABLE_COLS:name}}` in the header cell and a `{{placeholder}}` 
+in each data row. Leave subheader rows, spacer rows, and total rows empty in 
+column 2; the engine will clone the empty cell (preserving its styling) once per 
+record. No wrapper markers needed.
+
+```
+| Fee                  | {{TABLE_COLS:current_funds}} |
+|----------------------|------------------------------|
+| Product              | {{product}}                  |
+| Balance              | {{balance}}                  |
+| Ongoing fees         |                              |  ← subheader, empty cell
+|   Investment fee     | {{investment_fee}}           |
+|   Sliding admin fee  | {{sliding_admin_fee}}        |
+|   Admin fee (flat)   | {{admin_fee_flat}}           |
+|   ORR levy           | {{orr_levy}}                 |
+| Total product costs  | {{total_product_costs}}      |
+| Total combined costs | {{total_combined_costs}}     |
+```
+
+> **Rule:** All `{{placeholders}}` must appear only in the last (rightmost) column. 
+> Column 1 is never modified by the engine.
+
+> **Rule:** Placeholder names can be anything — `{{product}}`, `{{col_product}}`, 
+> `{{fund_product}}` are all valid. The name just needs to match the key in the payload.
+
+> **Rule:** Leave subheader, spacer, and section-break cells empty in the template 
+> column. The engine clones them as-is, preserving shading and borders, with no text.
+
+The payload is an array of objects — one object per column to generate:
+
+```json
+{
+  "key": "TABLE_COLS:current_funds",
+  "value": "[{\"product\": \"AMP MySuper\", \"balance\": \"$145,000\", \"investment_fee\": \"0.68%\", \"sliding_admin_fee\": \"$185 p.a.\", \"admin_fee_flat\": \"$52 p.a.\", \"orr_levy\": \"$14.50\", \"total_product_costs\": \"$1,233\", \"total_combined_costs\": \"$1,233\"}, {\"product\": \"REST Core Strategy\", \"balance\": \"$62,000\", \"investment_fee\": \"0.55%\", \"sliding_admin_fee\": \"$78 p.a.\", \"admin_fee_flat\": \"$0\", \"orr_levy\": \"$6.20\", \"total_product_costs\": \"$425\", \"total_combined_costs\": \"$425\"}]"
+}
+```
+
+`extract_merge_fields` returns a `col_tables` array with the table name, payload 
+key, and `row_keys` — the placeholder names the agent needs to populate per record.
+
+**TABLE_ROWS vs TABLE_COLS — which to use:**
+
+| | TABLE_ROWS | TABLE_COLS |
+|---|---|---|
+| Fixed axis | Columns (headers) | Rows (labels) |
+| Dynamic axis | Rows (one per record) | Columns (one per record) |
+| Typical use | Fee schedules, transaction lists | Product comparisons, fund comparisons |
+| Wrapper markers needed | Yes — TABLE_START / TABLE_END | No |
+
+---
+
 ### Image — `IMG:` prefix
 
 Fetches an image from a URL and embeds it inline at the placeholder location. 
 Supports PNG, JPEG, GIF, BMP, and WebP. PNG recommended for signatures.
+
+```
 {{IMG:adviser_signature}}
+```
 
 ```json
 { "key": "IMG:adviser_signature", "value": "https://yourbucket.s3.amazonaws.com/sigs/adviser.png" }
@@ -173,24 +255,11 @@ Supports PNG, JPEG, GIF, BMP, and WebP. PNG recommended for signatures.
 
 ---
 
-### HTML table — `TABLE:` prefix
-
-Converts an HTML table string to a native Word table. Header cells (`<th>`) receive 
-bold text and a light grey background.
-{{TABLE:portfolio_table}}
-
-```json
-{ "key": "TABLE:portfolio_table", "value": "<table><tr><th>Fund</th><th>Value</th></tr><tr><td>Australian Shares</td><td>$120,000</td></tr></table>" }
-```
-
-> **Rule:** `{{TABLE:field_name}}` must sit alone on its own line.
-
----
-
 ### Rich HTML content — `HTML:` prefix
 
 Converts a rich HTML string to native Word XML and injects it at the placeholder 
-location.
+location. Use for any formatted content — paragraphs, headings, lists, and tables 
+can all be passed in a single field.
 
 | HTML element | Word output |
 |---|---|
@@ -204,9 +273,9 @@ location.
 | `<br>` | Line break within paragraph |
 | `<table>` | Native Word table |
 
-A single `HTML:` field can contain any mix of paragraphs, headings, lists, and 
-tables in any order.
+```
 {{HTML:letter_body}}
+```
 
 ```json
 { "key": "HTML:letter_body", "value": "<h2>Our Recommendations</h2><p>We recommend...</p><ul><li><strong>Consolidate superannuation</strong> — merge accounts.</li></ul>" }
@@ -214,10 +283,9 @@ tables in any order.
 
 > **Rule:** `{{HTML:field_name}}` must sit alone on its own line.
 
-> **Important — HTML vs AI prefix:** Use `HTML:` when the content is formatted 
-> (paragraphs, lists, tables). Use `AI:` when the content is a short narrative 
-> string that appears inline within a sentence. Unlike `HTML:`, an `AI:` field 
-> can appear mid-sentence: `...because {{AI:mda_portfolio_rationale}}.`
+> **HTML vs AI:** Use `HTML:` when the content is formatted (paragraphs, lists, 
+> tables). Use `AI:` when the content is a short plain-text narrative that sits 
+> inline within an existing template sentence.
 
 ---
 
@@ -225,17 +293,22 @@ tables in any order.
 
 Semantically identical to a plain text field — the value is inserted as-is. 
 The `AI:` prefix signals to the agent that this field requires authored narrative 
-content rather than a data lookup.
+content rather than a data lookup. Unlike `HTML:`, an `AI:` field can appear 
+mid-sentence.
+
+```
 {{AI:executive_summary}}
-{{AI:risk_profile_rationale}}
+
+...because {{AI:mda_portfolio_rationale}}.
+```
 
 ```json
-{ "key": "AI:executive_summary", "value": "Based on our review of your financial position..." }
+{ "key": "AI:executive_summary", "value": "Based on our review of your financial position..." },
+{ "key": "AI:mda_portfolio_rationale", "value": "it aligns with your Growth risk profile and 15-year investment horizon" }
 ```
 
 > **Use `HTML:` instead** when the content needs formatting (bullet lists, bold, 
-> headings, tables). Use `AI:` for short plain-text narrative that sits inline 
-> within existing template sentences.
+> headings, tables).
 
 ---
 
@@ -244,8 +317,8 @@ content rather than a data lookup.
 Inserts a Word page break. No payload entry required.
 
 > **Rule:** `{{PAGE_BREAK}}` must sit alone on its own line.  
-> **Tip:** Place `{{PAGE_BREAK}}` immediately before `{{TABLE_START:name}}` or 
-> `{{TABLE:name}}` to prevent tables splitting awkwardly across pages.
+> **Tip:** Place `{{PAGE_BREAK}}` immediately before `{{TABLE_START:name}}` to 
+> prevent tables splitting awkwardly across pages.
 
 ---
 
@@ -256,11 +329,16 @@ Inserts a Word page break. No payload entry required.
 | `{{field_name}}` | `field_name` | Any string | No |
 | `{{#block_name}}` / `{{/block_name}}` | `#block_name` | `true` / `false` | Block mode: yes. Inline mode: no |
 | `{{TABLE_START:name}}` / `{{TABLE_END:name}}` | `TABLE_ROWS:name` | JSON array of row objects | Yes |
+| `{{TABLE_COLS:name}}` in table header cell | `TABLE_COLS:name` | JSON array of column objects | No — marker lives inside the table |
 | `{{IMG:field_name}}` | `IMG:field_name` | Image URL | Yes |
-| `{{TABLE:field_name}}` | `TABLE:field_name` | HTML table string | Yes |
-| `{{HTML:field_name}}` | `HTML:field_name` | Rich HTML string | Yes |
-| `{{AI:field_name}}` | `AI:field_name` | Any string (agent-authored, plain text) | No — can appear inline |
+| `{{HTML:field_name}}` | `HTML:field_name` | Rich HTML string (paragraphs, lists, tables) | Yes |
+| `{{AI:field_name}}` | `AI:field_name` | Plain-text narrative string | No — can appear inline |
 | `{{PAGE_BREAK}}` | None required | None required | Yes |
+
+> **Note — TABLE_ROWS vs TABLE_COLS:** `TABLE_ROWS` tables are wrapped in 
+> `{{TABLE_START:name}}` / `{{TABLE_END:name}}` marker paragraphs. `TABLE_COLS` 
+> tables need no markers — the `{{TABLE_COLS:name}}` tag inside the header cell 
+> of the template column is sufficient for both authoring and detection.
 
 ---
 
@@ -268,13 +346,12 @@ Inserts a Word page break. No payload entry required.
 
 ### Standard merge workflow
 
-Read template from FileStorage (base64)
-Call extract_merge_fields → get tag list + table column definitions
-Build the payload (see Payload Construction below)
-Call merge_document with template + payload
-Decode merged_docx_base64 → save or deliver the final document
-Check unresolved_tags — any entries mean the payload was missing a field
-
+1. Read template from FileStorage (base64)
+2. Call `extract_merge_fields` → get tag list + table definitions
+3. Build the payload (see Payload Construction below)
+4. Call `merge_document` with template + payload
+5. Decode `merged_docx_base64` → save or deliver the final document
+6. Check `unresolved_tags` — any entries mean the payload was missing a field
 
 ### Payload construction for AI agents
 
@@ -284,9 +361,9 @@ When an AI agent builds the payload from the tag list returned by
 | Prefix | Agent action |
 |---|---|
 | `#field` | Set `true` or `false` based on scope flags / client data |
-| `TABLE_ROWS:name` | Build a JSON array — column names from the `tables` output |
+| `TABLE_ROWS:name` | Build a JSON array of row objects — key names from `tables[].columns` |
+| `TABLE_COLS:name` | Build a JSON array of column objects — key names from `col_tables[].row_keys` |
 | `IMG:field` | Supply a publicly accessible image URL |
-| `TABLE:field` | Build and supply an HTML table string |
 | `HTML:field` | Author and supply a rich HTML string with lists, paragraphs, tables |
 | `AI:field` | Author a plain-text narrative string based on client context |
 | plain field | Look up the value from client/adviser data and supply as string |
@@ -312,13 +389,12 @@ recipe run time rather than hardcoding values in the recipe.
 
 **Example — adviser lookup:**
 
-Read FWP_Advisers.docx from FileStorage
-Find the row where adviser_name matches the SOA request
-Map all columns into the payload:
-adviser_name, adviser_ar_number, adviser_phone,
-adviser_email, adviser_address, adviser_is_principal,
-related_entity_name, licensee_name
-
+1. Read `FWP_Advisers.docx` from FileStorage
+2. Find the row where `adviser_name` matches the SOA request
+3. Map all columns into the payload:
+   `adviser_name`, `adviser_ar_number`, `adviser_phone`,
+   `adviser_email`, `adviser_address`, `adviser_is_principal`,
+   `related_entity_name`, `licensee_name`
 
 This pattern means adviser details never need to be updated in the recipe — only 
 in the reference file.
@@ -329,16 +405,15 @@ in the reference file.
 
 To onboard a new template and auto-generate its field reference:
 
-Upload the .docx template to Workato FileStorage
-Call extract_merge_fields on the uploaded template
-Pass the tag list + tables output to the AI agent with this prompt:
-"Generate a data contract for this template. For each field, document:
-the field name, prefix type, data source, expected format, and
-whether it is AI-authored or a data lookup. Group by section."
-Save the generated data contract as a companion .md file
-alongside the template in FileStorage
-Reference the data contract in the Workato recipe system prompt
-
+1. Upload the .docx template to Workato FileStorage
+2. Call `extract_merge_fields` on the uploaded template
+3. Pass the tag list + tables + col_tables output to the AI agent with this prompt:
+   > "Generate a data contract for this template. For each field, document:
+   > the field name, prefix type, data source, expected format, and
+   > whether it is AI-authored or a data lookup. Group by section."
+4. Save the generated data contract as a companion `.md` file
+   alongside the template in FileStorage
+5. Reference the data contract in the Workato recipe system prompt
 
 This gives every template a self-describing field reference that stays in sync 
 with the template itself.
@@ -387,25 +462,30 @@ When building templates programmatically (XML/docx-js), set
 ## Rules Summary
 
 - Field names may only contain letters, numbers, and underscores
-- `{{IMG:...}}`, `{{TABLE:...}}`, `{{HTML:...}}`, `{{TABLE_START:...}}`, 
-  `{{TABLE_END:...}}`, and `{{PAGE_BREAK}}` must each be on their own paragraph
-- Plain text and `{{AI:...}}` fields can appear inline anywhere, including 
-  mid-sentence
+- `{{IMG:...}}`, `{{HTML:...}}`, `{{TABLE_START:...}}`, `{{TABLE_END:...}}`, 
+  and `{{PAGE_BREAK}}` must each be on their own paragraph
+- Plain text and `{{AI:...}}` fields can appear inline anywhere, including mid-sentence
 - `TABLE_ROWS:` column names in the payload JSON must exactly match 
   `{{column_name}}` tags in the Word template row — case-sensitive, no spaces
+- `TABLE_COLS:` key names in each payload object must exactly match the 
+  `{{placeholder}}` names in the template's last column — case-sensitive, no spaces
+- For `TABLE_COLS:` tables, place `{{TABLE_COLS:name}}` in the header cell of 
+  the template column. No `{{TABLE_START:name}}` / `{{TABLE_END:name}}` markers needed
 - Conditional blocks have two modes:
   - **Block mode:** `{{#name}}` and `{{/name}}` each on their own paragraph
   - **Inline mode:** `{{#name}}` and `{{/name}}` in the same paragraph
 - Nested conditional blocks are supported as long as names are unique
 - `{{PAGE_BREAK}}` requires no payload entry and will not appear in the tag list
-- Place `{{PAGE_BREAK}}` immediately before `{{TABLE_START:name}}` or 
-  `{{TABLE:name}}` to prevent page-break gaps around tables
+- Place `{{PAGE_BREAK}}` immediately before `{{TABLE_START:name}}` to prevent 
+  page-break gaps around tables
 
 ---
 
 ## Template Examples
 
 ### Example 1 — Client Letter
+
+```
 {{client_name}}
 {{client_address}}
 {{letter_date}}
@@ -415,6 +495,7 @@ Yours sincerely,
 {{IMG:adviser_signature}}
 {{adviser_name}}
 {{adviser_title}}
+```
 
 ```json
 {
@@ -434,6 +515,8 @@ Yours sincerely,
 ---
 
 ### Example 2 — Statement of Advice (SOA)
+
+```
 {{client_name}}
 {{soa_date}}
 {{AI:executive_summary}}
@@ -454,6 +537,7 @@ Date of birth:  {{partner_dob}}
 {{/show_smsf_section}}
 {{IMG:client_signature}}
 {{client_name}}
+```
 
 ```json
 {
@@ -463,7 +547,7 @@ Date of birth:  {{partner_dob}}
     { "key": "AI:executive_summary",      "value": "This SOA has been prepared for John Smith following our review on 28 April 2026." },
     { "key": "#show_partner_section",     "value": "true" },
     { "key": "partner_name",              "value": "Jane Smith" },
-    { "key": "partner_dob",              "value": "15/06/1972" },
+    { "key": "partner_dob",               "value": "15/06/1972" },
     { "key": "TABLE_ROWS:fee_table",      "value": "[{\"account_owner\": \"John Smith\", \"fee_amount\": \"$1,500\", \"frequency\": \"Annually\"}]" },
     { "key": "HTML:recommendations_body", "value": "<h2>Superannuation</h2><p>We recommend consolidating your accounts.</p>" },
     { "key": "#show_smsf_section",        "value": "false" },
@@ -478,18 +562,24 @@ Date of birth:  {{partner_dob}}
 
 Use `AI:` when the agent authors a short phrase that sits within an existing 
 template sentence rather than as a standalone block.
+
+```
 The recommended {{mda_portfolio_name}} Portfolio is appropriate for you
 because {{AI:mda_portfolio_rationale}}.
+```
 
 ```json
-{ "key": "mda_portfolio_name",        "value": "Akambo Balanced" },
-{ "key": "AI:mda_portfolio_rationale","value": "it aligns with your Growth risk profile and 15-year investment horizon" }
+{ "key": "mda_portfolio_name",         "value": "Akambo Balanced" },
+{ "key": "AI:mda_portfolio_rationale", "value": "it aligns with your Growth risk profile and 15-year investment horizon" }
 ```
 
 ---
 
 ### Example 4 — Inline Conditionals
+
+```
 This arrangement will be between {{client1_name}} & {{client2_name}}{{#show_entity_party}}, and {{entity_name}}{{/show_entity_party}}, and Intergen Advisory Partners Pty Ltd.
+```
 
 ```json
 { "key": "#show_entity_party", "value": "false" }
@@ -502,13 +592,17 @@ Output: `This arrangement will be between John Smith & Jane Smith, and Intergen 
 ### Example 5 — Descriptive Conditional Names
 
 Block names can be long and descriptive — they act as instructions to the agent:
+
+```
 {{#has_asset_allocation_variances_exceeding_10_percent}}
 Asset Allocation Variance Explanation
 {{HTML:asset_allocation_variance_explanation}}
 {{/has_asset_allocation_variances_exceeding_10_percent}}
+
 {{#client_has_been_declared_bankrupt_in_last_7_years}}
 {{AI:bankruptcy_disclosure_narrative}}
 {{/client_has_been_declared_bankrupt_in_last_7_years}}
+```
 
 ---
 
@@ -516,6 +610,53 @@ Asset Allocation Variance Explanation
 
 ```json
 { "key": "HTML:portfolio_analysis", "value": "<p>Based on your <strong>Balanced</strong> risk profile:</p><table><tr><th>Asset Class</th><th>Recommended</th></tr><tr><td>Australian Shares</td><td>35%</td></tr><tr><td>International Shares</td><td>25%</td></tr></table><p>This allocation targets <em>moderate growth</em> over <strong>15 years</strong>.</p>" }
+```
+
+---
+
+### Example 7 — Column-repeating table (product comparison)
+
+The template has fixed row labels in column 1, `{{TABLE_COLS:name}}` in the 
+header cell of column 2, and `{{placeholders}}` in the data cells of column 2. 
+Subheader rows have an empty cell in column 2 — the engine clones it with its 
+styling intact and no text.
+
+```
+| Fee                  | {{TABLE_COLS:current_funds}} |
+|----------------------|------------------------------|
+| Product              | {{product}}                  |
+| Balance              | {{balance}}                  |
+| Ongoing fees         |                              |
+|   Investment fee     | {{investment_fee}}           |
+|   Sliding admin fee  | {{sliding_admin_fee}}        |
+|   Admin fee (flat)   | {{admin_fee_flat}}           |
+|   ORR levy           | {{orr_levy}}                 |
+| Total product costs  | {{total_product_costs}}      |
+| Total combined costs | {{total_combined_costs}}     |
+```
+
+Payload — one object per fund, key names matching the template placeholders:
+
+```json
+{
+  "key": "TABLE_COLS:current_funds",
+  "value": "[{\"product\": \"AMP MySuper\", \"balance\": \"$145,000\", \"investment_fee\": \"0.68%\", \"sliding_admin_fee\": \"$185 p.a.\", \"admin_fee_flat\": \"$52 p.a.\", \"orr_levy\": \"$14.50\", \"total_product_costs\": \"$1,233\", \"total_combined_costs\": \"$1,233\"}, {\"product\": \"REST Core Strategy\", \"balance\": \"$62,000\", \"investment_fee\": \"0.55%\", \"sliding_admin_fee\": \"$78 p.a.\", \"admin_fee_flat\": \"$0\", \"orr_levy\": \"$6.20\", \"total_product_costs\": \"$425\", \"total_combined_costs\": \"$425\"}, {\"product\": \"Hostplus Balanced\", \"balance\": \"$38,500\", \"investment_fee\": \"0.62%\", \"sliding_admin_fee\": \"$56 p.a.\", \"admin_fee_flat\": \"$0\", \"orr_levy\": \"$3.85\", \"total_product_costs\": \"$295\", \"total_combined_costs\": \"$295\"}]"
+}
+```
+
+`extract_merge_fields` output for this table:
+
+```json
+{
+  "col_tables": [
+    {
+      "name": "current_funds",
+      "type": "TABLE_COLS",
+      "payload_key": "TABLE_COLS:current_funds",
+      "row_keys": "admin_fee_flat, balance, investment_fee, orr_levy, product, sliding_admin_fee, total_combined_costs, total_product_costs"
+    }
+  ]
+}
 ```
 
 ---
@@ -545,24 +686,19 @@ additional installation required.
   values will not corrupt the document.
 - **Image fallback** — if an image URL is unreachable the field is replaced with 
   `[Image unavailable: <reason>]` and the merge continues.
-- **Table fallback** — if HTML table conversion fails the field is replaced with 
-  `[Table error: <reason>]` and the merge continues.
+- **HTML tables** — pass a `<table>` tag inside an `HTML:` field value to inject 
+  a native Word table. Header cells (`<th>`) receive bold text and a light grey 
+  background automatically.
+- **TABLE_COLS subheader rows** — rows with an empty template cell are cloned 
+  with their Word styling (shading, borders) intact but no text injected. Subheader 
+  rows, spacer rows, and section labels render correctly across all generated 
+  columns without any special syntax.
+- **TABLE_COLS column count** — the number of columns generated equals the number 
+  of objects in the payload array. There is no hard limit.
 - **Column hiding** — conditional blocks operate at the paragraph level. Hiding 
-  an entire table column is not supported. Pass empty values or pre-render the 
-  table without the column as a `TABLE:` field.
+  an entire table column is not supported. Pass empty values instead.
 - **Unresolved tags** — fields present in the template but missing from the 
   payload appear in `unresolved_tags` rather than being silently removed.
 - **Blank page removal** — when a `false` conditional block is removed, any 
   page-break paragraph immediately before it is automatically collapsed so blank 
   pages are never produced.
-
-Key additions vs the original:
-
-AI: vs HTML: distinction clearly explained with the inline mid-sentence example
-TABLE_ROWS: column name matching rule (case-sensitive, exact match)
-Payload construction logic table for AI agents
-Missing data / {{placeholder}} rule
-Reference file lookup pattern (adviser lookup)
-Template onboarding workflow (upload → extract → AI generates data contract → save as companion .md)
-AutoFit to Window guidance for tables including the XML attribute
-Example 3 (inline AI field) and Example 5 updated with the real FWP conditional name
