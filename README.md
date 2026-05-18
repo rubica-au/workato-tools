@@ -56,7 +56,14 @@ by type.
       "row_keys": "balance, investment_fee, orr_levy, product, sliding_admin_fee, total_combined_costs, total_product_costs"
     }
   ],
-  "files_scanned": "word/document.xml"
+  "files_scanned": "word/document.xml",
+  "repeating_sections": [
+    {
+      "name": "recommendations",
+      "payload_key": "REPEAT:recommendations",
+      "field_keys": "#show_product_comparison, AI:recommendation_disclaimer, AI:recommendation_rationale, HTML:recommendation_detail, TABLE_COLS:recommendation_comparison, recommendation_title"
+    }
+  ]
 }
 ```
 
@@ -91,7 +98,7 @@ substitutions, and returns the populated document as base64.
 
 ## Field Types
 
-The engine supports eight field types, distinguished by prefix.
+The engine supports nine field types, distinguished by prefix.
 
 ### Plain text — no prefix
 
@@ -348,6 +355,50 @@ Inserts a Word page break. No payload entry required.
 
 ---
 
+### Repeating section — `REPEAT:` prefix
+
+Stamps out a block of Word content once per record in the payload. The block can contain any mix of field types — plain text, `AI:`, `HTML:`, `TABLE_COLS:`, `TABLE_ROWS:`, `IMG:`, and conditionals — all resolved per record. Fields not present in a record fall back to the top-level payload (e.g. shared adviser details).
+
+**How to author the template in Word:**
+
+Wrap the repeating block with `{{REPEAT_START:name}}` and `{{REPEAT_END:name}}` marker paragraphs, each on their own line. Everything between the markers is stamped out once per record.
+
+```
+{{REPEAT_START:recommendations}}
+
+{{recommendation_title}}
+{{AI:recommendation_rationale}}
+
+{{#show_product_comparison}}
+Product comparison
+{{TABLE_COLS:recommendation_comparison}}
+{{/show_product_comparison}}
+
+{{HTML:recommendation_detail}}
+Disclosure: {{AI:recommendation_disclaimer}}
+
+{{REPEAT_END:recommendations}}
+```
+
+> **Rule:** `{{REPEAT_START:name}}` and `{{REPEAT_END:name}}` must each be on their own paragraph.
+
+> **Rule:** Conditional blocks, `TABLE_COLS:`, `HTML:`, `IMG:`, and plain text fields inside a repeat block are all resolved using the record's fields first, falling back to top-level fields.
+
+> **Tip:** Keep conditional block names unique across all records — they are resolved per-record so the same name in different records works correctly.
+
+The payload is an array of objects — one per repetition:
+
+```json
+{
+  "key": "REPEAT:recommendations",
+  "value": "[{"recommendation_title": "1. Consolidate Superannuation", "AI:recommendation_rationale": "You hold three accounts...", "#show_product_comparison": "true", "TABLE_COLS:recommendation_comparison": "[{\"col_product\": \"AMP MySuper\", \"col_balance\": \"$145,000\", \"col_investment_fee\": \"0.68%\", \"col_total_fees\": \"$1,233\"}]", "HTML:recommendation_detail": "<p>We recommend <strong>Netwealth</strong>.</p><ul><li>Reduced fees</li></ul>", "AI:recommendation_disclaimer": "Past performance is not a reliable indicator."}, {"recommendation_title": "2. Increase Salary Sacrifice", "#show_product_comparison": "false", ...}]"
+}
+```
+
+`extract_merge_fields` returns a `repeating_sections` array with the name, payload key, and all field keys found inside the block so the agent knows exactly what to populate per record.
+
+---
+
 ## Field Type Summary
 
 | Field | Payload key | Payload value | Own line required |
@@ -360,6 +411,7 @@ Inserts a Word page break. No payload entry required.
 | `{{HTML:field_name}}` | `HTML:field_name` | Rich HTML string (paragraphs, lists, tables) | Yes |
 | `{{AI:field_name}}` | `AI:field_name` | Plain-text narrative string | No — can appear inline |
 | `{{PAGE_BREAK}}` | None required | None required | Yes |
+| `{{REPEAT_START:name}}` / `{{REPEAT_END:name}}` | `REPEAT:name` | JSON array of record objects | Yes |
 
 > **Note — TABLE_ROWS vs TABLE_COLS:** `TABLE_ROWS` tables are wrapped in 
 > `{{TABLE_START:name}}` / `{{TABLE_END:name}}` marker paragraphs. `TABLE_COLS` 
@@ -374,7 +426,7 @@ Inserts a Word page break. No payload entry required.
 
 1. Read template from FileStorage (base64)
 2. Call `extract_merge_fields` → get tag list + table definitions
-3. Build the payload (see Payload Construction below)
+3. Build the payload (see Payload Construction below) — check `repeating_sections` for any repeat blocks
 4. Call `merge_document` with template + payload
 5. Decode `merged_docx_base64` → save or deliver the final document
 6. Check `unresolved_tags` — any entries mean the payload was missing a field
@@ -392,6 +444,7 @@ When an AI agent builds the payload from the tag list returned by
 | `IMG:field` | Supply a publicly accessible image URL |
 | `HTML:field` | Author and supply a rich HTML string with lists, paragraphs, tables |
 | `AI:field` | Author a plain-text narrative string based on client context |
+| `REPEAT:name` | Build a JSON array of record objects — field keys from `repeating_sections[].field_keys` |
 | plain field | Look up the value from client/adviser data and supply as string |
 
 **Handling missing data:**  
@@ -505,6 +558,9 @@ When building templates programmatically (XML/docx-js), set
 - `{{PAGE_BREAK}}` requires no payload entry and will not appear in the tag list
 - Place `{{PAGE_BREAK}}` immediately before `{{TABLE_START:name}}` to prevent 
   page-break gaps around tables
+- `REPEAT:` records are a flat dict — all field types work inside a repeat block
+- Conditionals inside a repeat block are resolved per-record; they must not also 
+  exist at the top level of the payload or they will conflict
 
 ---
 
@@ -688,6 +744,50 @@ Payload — one object per fund, key names matching the template placeholders:
 
 ---
 
+### Example 8 — Repeating section (SOA recommendations)
+
+Each recommendation is stamped out from the same template block with its own title, rationale, optional comparison table, HTML detail, and disclaimer.
+
+```
+{{REPEAT_START:recommendations}}
+
+{{recommendation_title}}
+{{AI:recommendation_rationale}}
+
+{{#show_product_comparison}}
+Product comparison
+{{TABLE_COLS:recommendation_comparison}}
+{{/show_product_comparison}}
+
+{{HTML:recommendation_detail}}
+Disclosure: {{AI:recommendation_disclaimer}}
+
+{{REPEAT_END:recommendations}}
+```
+
+```json
+{
+  "key": "REPEAT:recommendations",
+  "value": "[{"recommendation_title": "1. Consolidate Superannuation", "AI:recommendation_rationale": "You hold three accounts incurring $1,953 p.a. in duplicate fees.", "#show_product_comparison": "true", "TABLE_COLS:recommendation_comparison": "[{\"col_product\": \"AMP MySuper\", \"col_balance\": \"$145,000\", \"col_investment_fee\": \"0.68%\", \"col_total_fees\": \"$1,233\"}, {\"col_product\": \"Netwealth Super Accelerator\", \"col_balance\": \"$245,500\", \"col_investment_fee\": \"0.44%\", \"col_total_fees\": \"$1,299\"}]", "HTML:recommendation_detail": "<p>We recommend consolidating into <strong>Netwealth Super Accelerator Core</strong>.</p><ul><li>Reduced fees</li><li>Simplified management</li></ul>", "AI:recommendation_disclaimer": "Past performance is not a reliable indicator of future returns."}, {"recommendation_title": "2. Increase Salary Sacrifice", "AI:recommendation_rationale": "Increasing to $27,500 p.a. maximises your concessional cap.", "#show_product_comparison": "false", "TABLE_COLS:recommendation_comparison": "[]", "HTML:recommendation_detail": "<p>Salary sacrifice an additional <strong>$10,000 p.a.</strong></p><ol><li>Complete salary sacrifice agreement</li><li>Nominate Netwealth as destination</li></ol>", "AI:recommendation_disclaimer": "Tax outcomes depend on your personal circumstances."}]"
+}
+```
+
+`extract_merge_fields` output for this template:
+
+```json
+{
+  "repeating_sections": [
+    {
+      "name": "recommendations",
+      "payload_key": "REPEAT:recommendations",
+      "field_keys": "#show_product_comparison, AI:recommendation_disclaimer, AI:recommendation_rationale, HTML:recommendation_detail, TABLE_COLS:recommendation_comparison, recommendation_title"
+    }
+  ]
+}
+```
+
+---
+
 ## Dependencies
 
 | Library | Workato version | Purpose |
@@ -726,6 +826,7 @@ additional installation required.
   an entire table column is not supported. Pass empty values instead.
 - **Unresolved tags** — fields present in the template but missing from the 
   payload appear in `unresolved_tags` rather than being silently removed.
+- **REPEAT blocks** — all field types work inside a repeat block including conditionals, TABLE_COLS, HTML, and images. Conditional flags inside a repeat block must only appear in the record payload, not at the top level, or they will be resolved (and potentially removed) before the repeat loop runs.
 - **Blank page removal** — when a `false` conditional block is removed, any 
   page-break paragraph immediately before it is automatically collapsed so blank 
   pages are never produced.
