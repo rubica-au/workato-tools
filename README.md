@@ -243,15 +243,41 @@ key, and `row_keys` — the placeholder names the agent needs to populate per re
 Fetches an image from a URL and embeds it inline at the placeholder location. 
 Supports PNG, JPEG, GIF, BMP, and WebP. PNG recommended for signatures.
 
+**Width hint — `__Xcm` suffix**
+
+Append `__Xcm` to the tag name to set the rendered width. Height is always derived 
+proportionally from the image's natural aspect ratio. The hint is encoded in the 
+template tag, not the payload — the agent always supplies just the URL.
+
 ```
-{{IMG:adviser_signature}}
+{{IMG:adviser_signature__3cm}}
+{{IMG:graph__15cm}}
+{{IMG:client_photo__5cm}}
 ```
+
+If no hint is supplied the engine caps the image at 15.4 cm wide × 8 cm tall 
+(proportional), which suits most charts. For small images like signatures, always 
+supply a hint.
+
+**Recommended widths by image type:**
+
+| Image type | Recommended tag |
+|---|---|
+| Adviser / client signature | `__3cm` |
+| Chart / graph | `__15cm` |
+| Photo | `__5cm` |
+| Half-width diagram | `__8cm` |
+
+`extract_merge_fields` returns the canonical tag name with the hint stripped — 
+e.g. `IMG:graph` — so the agent never needs to know about sizing. It just supplies 
+the URL.
 
 ```json
-{ "key": "IMG:adviser_signature", "value": "https://yourbucket.s3.amazonaws.com/sigs/adviser.png" }
+{ "key": "IMG:adviser_signature", "value": "https://yourbucket.s3.amazonaws.com/sigs/adviser.png" },
+{ "key": "IMG:graph",             "value": "https://quickchart.io/chart?c=..." }
 ```
 
-> **Rule:** `{{IMG:field_name}}` must sit alone on its own line in Word.
+> **Rule:** `{{IMG:field_name__Xcm}}` must sit alone on its own line in Word.
 
 ---
 
@@ -330,7 +356,7 @@ Inserts a Word page break. No payload entry required.
 | `{{#block_name}}` / `{{/block_name}}` | `#block_name` | `true` / `false` | Block mode: yes. Inline mode: no |
 | `{{TABLE_START:name}}` / `{{TABLE_END:name}}` | `TABLE_ROWS:name` | JSON array of row objects | Yes |
 | `{{TABLE_COLS:name}}` in table header cell | `TABLE_COLS:name` | JSON array of column objects | No — marker lives inside the table |
-| `{{IMG:field_name}}` | `IMG:field_name` | Image URL | Yes |
+| `{{IMG:field_name__Xcm}}` | `IMG:field_name` | Image URL | Yes — hint stripped from payload key |
 | `{{HTML:field_name}}` | `HTML:field_name` | Rich HTML string (paragraphs, lists, tables) | Yes |
 | `{{AI:field_name}}` | `AI:field_name` | Plain-text narrative string | No — can appear inline |
 | `{{PAGE_BREAK}}` | None required | None required | Yes |
@@ -464,6 +490,7 @@ When building templates programmatically (XML/docx-js), set
 - Field names may only contain letters, numbers, and underscores
 - `{{IMG:...}}`, `{{HTML:...}}`, `{{TABLE_START:...}}`, `{{TABLE_END:...}}`, 
   and `{{PAGE_BREAK}}` must each be on their own paragraph
+- `{{IMG:...}}` width hint: append `__Xcm` to the tag name (e.g. `{{IMG:graph__15cm}}`). The payload key is always the name without the hint (e.g. `IMG:graph`)
 - Plain text and `{{AI:...}}` fields can appear inline anywhere, including mid-sentence
 - `TABLE_ROWS:` column names in the payload JSON must exactly match 
   `{{column_name}}` tags in the Word template row — case-sensitive, no spaces
