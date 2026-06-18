@@ -1,8 +1,8 @@
-# Workato Client Onboarding: Document Generation Setup
+# Document Generation Setup
 
 This guide covers the end-to-end process for onboarding a new client into Workato and connecting them to Rubica Chat with document generation.
 
----
+
 
 ## Overview
 
@@ -14,7 +14,7 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 4. Set up file storage directories and upload templates
 5. Add users and connect the MCP in Rubica Chat
 
----
+
 
 ## Stage 1: Create the Customer Workspace
 
@@ -27,7 +27,7 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 
 5. Save.
 
----
+
 
 ## Stage 2: Grant API Access
 
@@ -40,7 +40,6 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 
 > The tenant API architecture means all doc gen recipes live in the central Rubica workspace. Client workspaces call those recipes via API, so you don't need to manage 100 separate recipe sets.
 
----
 
 ## Stage 3: Import the Recipe Package
 
@@ -55,7 +54,7 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 6. Test the connection by running a recipe (e.g. Get Slide Presentation). If it returns a result, the connection is working.
 7. Start all remaining recipes. You can bulk-start them directly from the project view.
 
----
+
 
 ## Stage 4: File Storage and Templates
 
@@ -68,7 +67,7 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 
 3. Upload the client's document templates (SOA, ROA, etc.) into the `templates` folder.
 
----
+
 
 ## Stage 5: Add Users and Connect in Rubica Chat
 
@@ -91,7 +90,7 @@ Every client — regardless of whether they are a CRM user — gets their own Wo
 7. Check **I trust this application** and click **Create**.
 8. Click **Connect** to authenticate.
 
----
+
 
 ## Troubleshooting: MCP Authentication Failure
 
@@ -103,7 +102,7 @@ If the connector fails to authenticate in Rubica Chat and the error says "check 
 - Check that other client workspaces are connecting fine to isolate whether the issue is workspace-specific.
 - If the problem persists across empty workspaces and fresh setups, escalate to Workato support (contact Ricardo).
 
----
+
 
 ## Summary Checklist
 
